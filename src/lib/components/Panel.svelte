@@ -390,25 +390,25 @@
           <button class="del" onclick={() => removeLoop(node.id)} aria-label="Delete">✕</button>
         </div>
         <div class="secondary">
-          <label class="ctl">
+          <div class="ctl">
             <span class="ctl-label">Start</span>
             <button onclick={() => nudge(node, 'startTime', -1)} aria-label="Earlier start">−</button>
             <span class="ctl-val">{fmt(node.startTime)}</span>
             <button onclick={() => nudge(node, 'startTime', 1)} aria-label="Later start">+</button>
-          </label>
-          <label class="ctl">
+          </div>
+          <div class="ctl">
             <span class="ctl-label">End</span>
             <button onclick={() => nudge(node, 'endTime', -1)} aria-label="Earlier end">−</button>
             <span class="ctl-val">{fmt(node.endTime)}</span>
             <button onclick={() => nudge(node, 'endTime', 1)} aria-label="Later end">+</button>
-          </label>
-          <label class="ctl">
+          </div>
+          <div class="ctl">
             <span class="ctl-label">Speed</span>
             <button onclick={() => nudgeLoopSpeed(node, -0.05)} aria-label="Slower">−</button>
             <span class="ctl-val">{node.speed.toFixed(2)}×</span>
             <button onclick={() => nudgeLoopSpeed(node, 0.05)} aria-label="Faster">+</button>
-          </label>
-          <label class="ctl">
+          </div>
+          <div class="ctl">
             <span class="ctl-label">Reps</span>
             {#if node.repeatCount == null}
               <button onclick={() => toFinite(node)} title="Set a repeat count">∞</button>
@@ -423,7 +423,7 @@
                 aria-label="Loop forever"
               >∞</button>
             {/if}
-          </label>
+          </div>
         </div>
       </div>
     {/each}
