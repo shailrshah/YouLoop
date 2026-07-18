@@ -89,19 +89,22 @@
   // Sync the input's value from storage only when the user isn't editing, so
   // external writes (play-count increments, cross-tab edits) never clobber
   // a caret mid-type or drop keystrokes.
-  function syncedLabel(
+  function syncedInput<T extends string | number>(
     node: HTMLInputElement,
-    params: { value: string; commit: (v: string) => void },
+    params: { value: T; commit: (raw: string) => void; format?: (v: T) => string },
   ) {
-    node.value = params.value;
+    const fmt = () => (params.format ? params.format(params.value) : String(params.value));
+    node.value = fmt();
     let commit = params.commit;
     const onChange = () => commit(node.value);
     node.addEventListener('change', onChange);
     return {
-      update(next: { value: string; commit: (v: string) => void }) {
+      update(next: { value: T; commit: (raw: string) => void; format?: (v: T) => string }) {
         commit = next.commit;
-        if (document.activeElement !== node && node.value !== next.value) {
-          node.value = next.value;
+        params = next;
+        const rendered = next.format ? next.format(next.value) : String(next.value);
+        if (document.activeElement !== node && node.value !== rendered) {
+          node.value = rendered;
         }
       },
       destroy() {
@@ -177,8 +180,12 @@
   }
   async function setLoopSpeed(loop: Loop, s: number) {
     const clamped = Math.min(4, Math.max(0.05, +s.toFixed(2)));
+    if (clamped === loop.speed) return;
     await updateLoop(loop.id, { speed: clamped });
     if (activeId === loop.id) engine.syncActive(loop.id, { speed: clamped });
+  }
+  function nudgeLoopSpeed(loop: Loop, delta: number) {
+    void setLoopSpeed(loop, loop.speed + delta);
   }
   function setHeaderSpeed(s: number) {
     speed = Math.min(4, Math.max(0.05, +s.toFixed(2)));
@@ -217,8 +224,18 @@
 
   function onKey(e: KeyboardEvent) {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const el = e.target as HTMLElement;
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    // Our inputs live inside a Shadow DOM, so `e.target` is retargeted to the
+    // shadow host at document level. Use composedPath to find the real origin.
+    const path = e.composedPath();
+    const originEl = (path[0] as HTMLElement) ?? (e.target as HTMLElement);
+    if (
+      originEl &&
+      (originEl.tagName === 'INPUT' ||
+        originEl.tagName === 'TEXTAREA' ||
+        originEl.isContentEditable)
+    ) {
+      return;
+    }
     const active = engine?.activeLoop ?? null;
     // Only handle a key when the action is meaningful right now — otherwise
     // let YouTube (or the browser) see it. Keys that overlap YouTube's own
@@ -288,7 +305,7 @@
         </button>
         <input
           class="label"
-          use:syncedLabel={{ value: node.label, commit: (v) => updateLoop(node.id, { label: v }) }}
+          use:syncedInput={{ value: node.label, commit: (v) => updateLoop(node.id, { label: v }) }}
         />
         <div class="time">
           <button onclick={() => nudge(node, 'startTime', -1)}>−</button>
@@ -299,13 +316,11 @@
           <span>{fmt(node.endTime)}</span>
           <button onclick={() => nudge(node, 'endTime', 1)}>+</button>
         </div>
-        <input
-          class="lspeed"
-          type="number" min="0.05" max="4" step="0.05"
-          value={node.speed}
-          onchange={(e) => setLoopSpeed(node, +(e.currentTarget as HTMLInputElement).value)}
-          title="Loop speed"
-        />
+        <div class="lspeed" title="Loop speed">
+          <button onclick={() => nudgeLoopSpeed(node, -0.05)} aria-label="Slower">−</button>
+          <span>{node.speed.toFixed(2)}×</span>
+          <button onclick={() => nudgeLoopSpeed(node, 0.05)} aria-label="Faster">+</button>
+        </div>
         <button class="reps" onclick={() => cycleReps(node)} title="Repeat count">
           {node.repeatCount == null ? '∞' : `×${node.repeatCount}`}
         </button>
@@ -360,7 +375,9 @@
   .time { display: flex; align-items: center; gap: 3px; color: #aaa; }
   .time span { min-width: 34px; text-align: center; }
   .time .sep { min-width: 8px; }
-  .lspeed { width: 56px; background: #272727; color: #f1f1f1; border: none; border-radius: 6px; padding: 2px 4px; }
+  .lspeed { display: flex; align-items: center; gap: 3px; color: #aaa; }
+  .lspeed span { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+  .lspeed button { padding: 2px 8px; border-radius: 999px; }
   .plays { color: #aaa; font-size: 12px; }
   button {
     background: #272727; color: #f1f1f1; border: none;
