@@ -36,6 +36,7 @@ export class LoopEngine {
   private rafId: number | null = null;
   private pendingSelfSeeks = 0; // seeks we initiated; onSeeking should ignore them
   private wrapArmed = true; // false right after a wrap-seek, until we observe currentTime < endTime again
+  private lastTickTime = 0; // previous tick's currentTime, for detecting user jumps
 
   constructor(
     private video: HTMLVideoElement,
@@ -70,6 +71,7 @@ export class LoopEngine {
     this.active = loop;
     this.currentRep = 0;
     this.wrapArmed = true;
+    this.lastTickTime = this.video.currentTime;
     setPreservesPitch(this.video, true);
     this.video.playbackRate = loop.speed || 1;
     if (
@@ -131,14 +133,17 @@ export class LoopEngine {
 
   private onSeeking(): void {
     if (!this.active) return;
-    if (this.pendingSelfSeeks > 0) {
-      this.pendingSelfSeeks--;
+    const t = this.video.currentTime;
+    // Any seek landing outside the loop range is a user seek. Our own wrap
+    // seeks always target startTime (inside), so we can decide by destination
+    // rather than trusting the pendingSelfSeeks counter — which can be off if
+    // the tick raced ahead of the user's seek event and queued its own wrap.
+    if (t < this.active.startTime - 0.05 || t > this.active.endTime + 0.05) {
+      this.pendingSelfSeeks = 0;
+      this.deactivate();
       return;
     }
-    const t = this.video.currentTime;
-    if (t < this.active.startTime - 0.05 || t > this.active.endTime + 0.05) {
-      this.deactivate(); // manual seek outside range -> auto-exit
-    }
+    if (this.pendingSelfSeeks > 0) this.pendingSelfSeeks--;
   }
 
   private tick(): void {
@@ -157,6 +162,22 @@ export class LoopEngine {
     if (!getPreservesPitch(this.video)) setPreservesPitch(this.video, true);
 
     const t = this.video.currentTime;
+    const jumped = Math.abs(t - this.lastTickTime) > 1.0;
+    this.lastTickTime = t;
+    // If currentTime jumped by more than a plausible frame delta, it was a
+    // user seek that beat the `seeking` event to us. If the destination is
+    // outside the loop, treat it as a manual exit; if inside, just don't wrap
+    // (let the natural playback take over from there).
+    if (jumped) {
+      if (t < loop.startTime - 0.05 || t > loop.endTime + 0.05) {
+        this.deactivate();
+        return;
+      }
+      // Re-arm so we don't fire a spurious wrap on the very next frame.
+      this.wrapArmed = t < loop.endTime - 0.05;
+      this.rafId = requestAnimationFrame(this.tick);
+      return;
+    }
     // Re-arm the wrap trigger once we've observed playback inside the loop
     // again. Without this, the browser's async seek can leave currentTime past
     // endTime for one or two frames after our wrap-seek, so the tick would

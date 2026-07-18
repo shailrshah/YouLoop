@@ -13,6 +13,7 @@
     nextLoopName,
   } from '@/lib/storage/store';
   import { scrapeVideoInfo } from '@/lib/player/video';
+  import { attachLoopMarkers, type LoopMarkers } from '@/lib/player/loopMarkers';
   import { browser } from 'wxt/browser';
 
   let { videoId, video }: { videoId: string; video: HTMLVideoElement } = $props();
@@ -28,6 +29,7 @@
 
   // Engine + active-state mirror (engine is imperative; mirror to reactive state).
   let engine: LoopEngine;
+  let markers: LoopMarkers | null = null;
   let activeId = $state<string | null>(null);
   let rep = $state(0);
   let repTotal = $state<number | null>(null);
@@ -46,8 +48,10 @@
       },
       onExit: () => {
         activeId = null;
+        markers?.setActive(null);
       },
     });
+    markers = attachLoopMarkers(video);
     speed = video.playbackRate;
 
     document.addEventListener('keydown', onKey, true);
@@ -83,7 +87,18 @@
 
   onDestroy(() => {
     engine?.destroy();
+    markers?.destroy();
+    markers = null;
     document.removeEventListener('keydown', onKey, true);
+  });
+
+  // Keep the progress-bar overlay in sync with the active loop and any edits
+  // (nudge, cycleReps doesn't affect geometry but times can move underneath us
+  // via storage changes from another tab).
+  $effect(() => {
+    if (!markers) return;
+    const current = activeId ? loops.find((l) => l.id === activeId) ?? null : null;
+    markers.setActive(current);
   });
 
   // Sync the input's value from storage only when the user isn't editing, so
