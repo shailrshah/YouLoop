@@ -210,11 +210,9 @@
     if (activeId) engine.setAmbientRate(speed);
     else video.playbackRate = speed;
   }
-  function cycleReps(loop: Loop) {
-    // null -> 2 -> 3 -> 5 -> 10 -> null
-    const order = [null, 2, 3, 5, 10];
-    const i = order.findIndex((v) => v === loop.repeatCount);
-    const next = order[(i + 1) % order.length];
+  const DEFAULT_FINITE_REPS = 5;
+  function setReps(loop: Loop, next: number | null) {
+    if (next === loop.repeatCount) return;
     void updateLoop(loop.id, { repeatCount: next });
     if (activeId === loop.id) {
       engine.syncActive(loop.id, { repeatCount: next });
@@ -224,6 +222,17 @@
       rep = 0;
       repTotal = next;
     }
+  }
+  function toFinite(loop: Loop) {
+    setReps(loop, DEFAULT_FINITE_REPS);
+  }
+  function toInfinite(loop: Loop) {
+    setReps(loop, null);
+  }
+  function nudgeReps(loop: Loop, delta: number) {
+    if (loop.repeatCount == null) return;
+    const next = Math.max(1, loop.repeatCount + delta);
+    setReps(loop, next);
   }
   function activeIndex(): number {
     return flat.findIndex((f) => f.node.id === activeId);
@@ -315,32 +324,58 @@
   <div class="loops">
     {#each flat as { node, depth } (node.id)}
       <div class="row" class:active={activeId === node.id} style:padding-left={`${depth * 14}px`}>
-        <button class="play" onclick={() => (activeId === node.id ? exitLoop() : activate(node))}>
-          {activeId === node.id ? '■' : '▶'}
-        </button>
-        <input
-          class="label"
-          use:syncedInput={{ value: node.label, commit: (v) => updateLoop(node.id, { label: v }) }}
-        />
-        <div class="time">
-          <button onclick={() => nudge(node, 'startTime', -1)}>−</button>
-          <span>{fmt(node.startTime)}</span>
-          <button onclick={() => nudge(node, 'startTime', 1)}>+</button>
-          <span class="sep">/</span>
-          <button onclick={() => nudge(node, 'endTime', -1)}>−</button>
-          <span>{fmt(node.endTime)}</span>
-          <button onclick={() => nudge(node, 'endTime', 1)}>+</button>
+        <div class="primary">
+          <button class="play" onclick={() => (activeId === node.id ? exitLoop() : activate(node))}>
+            {activeId === node.id ? '■' : '▶'}
+          </button>
+          <input
+            class="label"
+            use:syncedInput={{ value: node.label, commit: (v) => updateLoop(node.id, { label: v }) }}
+          />
+          <span class="range">{fmt(node.startTime)}–{fmt(node.endTime)}</span>
+          <span class="meta">
+            {#if node.speed !== 1}<span class="chip">{node.speed.toFixed(2)}×</span>{/if}
+            {#if node.repeatCount != null}<span class="chip">×{node.repeatCount}</span>{/if}
+            <span class="plays" title="Times played">▷ {node.playCount}</span>
+          </span>
+          <button class="del" onclick={() => removeLoop(node.id)} aria-label="Delete">✕</button>
         </div>
-        <div class="lspeed" title="Loop speed">
-          <button onclick={() => nudgeLoopSpeed(node, -0.05)} aria-label="Slower">−</button>
-          <span>{node.speed.toFixed(2)}×</span>
-          <button onclick={() => nudgeLoopSpeed(node, 0.05)} aria-label="Faster">+</button>
+        <div class="secondary">
+          <label class="ctl">
+            <span class="ctl-label">Start</span>
+            <button onclick={() => nudge(node, 'startTime', -1)} aria-label="Earlier start">−</button>
+            <span class="ctl-val">{fmt(node.startTime)}</span>
+            <button onclick={() => nudge(node, 'startTime', 1)} aria-label="Later start">+</button>
+          </label>
+          <label class="ctl">
+            <span class="ctl-label">End</span>
+            <button onclick={() => nudge(node, 'endTime', -1)} aria-label="Earlier end">−</button>
+            <span class="ctl-val">{fmt(node.endTime)}</span>
+            <button onclick={() => nudge(node, 'endTime', 1)} aria-label="Later end">+</button>
+          </label>
+          <label class="ctl">
+            <span class="ctl-label">Speed</span>
+            <button onclick={() => nudgeLoopSpeed(node, -0.05)} aria-label="Slower">−</button>
+            <span class="ctl-val">{node.speed.toFixed(2)}×</span>
+            <button onclick={() => nudgeLoopSpeed(node, 0.05)} aria-label="Faster">+</button>
+          </label>
+          <label class="ctl">
+            <span class="ctl-label">Reps</span>
+            {#if node.repeatCount == null}
+              <button onclick={() => toFinite(node)} title="Set a repeat count">∞</button>
+            {:else}
+              <button onclick={() => nudgeReps(node, -1)} aria-label="One fewer rep">−</button>
+              <span class="ctl-val">×{node.repeatCount}</span>
+              <button onclick={() => nudgeReps(node, 1)} aria-label="One more rep">+</button>
+              <button
+                class="rep-inf"
+                onclick={() => toInfinite(node)}
+                title="Loop forever"
+                aria-label="Loop forever"
+              >∞</button>
+            {/if}
+          </label>
         </div>
-        <button class="reps" onclick={() => cycleReps(node)} title="Repeat count">
-          {node.repeatCount == null ? '∞' : `×${node.repeatCount}`}
-        </button>
-        <span class="plays" title="Times played">▷ {node.playCount}</span>
-        <button class="del" onclick={() => removeLoop(node.id)} aria-label="Delete">✕</button>
       </div>
     {/each}
     {#if !flat.length}
@@ -376,31 +411,67 @@
   .capture { display: flex; gap: 8px; margin-bottom: 8px; }
   .loops { max-height: 320px; overflow-y: auto; }
   .row {
-    display: flex; align-items: center; gap: 8px;
-    padding: 4px 0; border-radius: 8px;
+    padding: 2px 4px; border-radius: 8px;
   }
   .row.active { background: rgba(255, 0, 51, 0.18); }
   .row:hover { background: #272727; }
+  .row.active:hover { background: rgba(255, 0, 51, 0.24); }
+  .primary { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
   .label {
     flex: 1; min-width: 60px;
     background: transparent; border: none; color: #f1f1f1;
     font: inherit; padding: 2px 4px; border-radius: 4px;
   }
   .label:focus { background: #272727; outline: none; }
-  .time { display: flex; align-items: center; gap: 3px; color: #aaa; }
-  .time span { min-width: 34px; text-align: center; }
-  .time .sep { min-width: 8px; }
-  .lspeed { display: flex; align-items: center; gap: 3px; color: #aaa; }
-  .lspeed span { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
-  .lspeed button { padding: 2px 8px; border-radius: 999px; }
-  .plays { color: #aaa; font-size: 12px; }
+  .range { color: #aaa; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .meta { display: flex; align-items: center; gap: 6px; color: #aaa; font-size: 12px; }
+  .chip {
+    background: #272727; border-radius: 999px; padding: 1px 6px;
+    color: #ddd; font-size: 11px; font-variant-numeric: tabular-nums;
+  }
+  .plays { font-size: 12px; }
+  /* Secondary strip: hidden by default, revealed when the row is active or
+     hovered. Rendered below the primary line — one column of quick controls. */
+  .secondary {
+    display: none;
+    align-items: center; flex-wrap: wrap; gap: 6px;
+    padding: 4px 4px 6px 30px; /* align under label, past the play button */
+    color: #aaa;
+  }
+  .row.active .secondary,
+  .row:hover .secondary,
+  .row:focus-within .secondary { display: flex; }
+  /* Each control cluster gets its own boxed background so START/END/SPEED/REPS
+     are unambiguous — the `+` on the far right of one cluster can't be
+     confused with the next cluster's label. */
+  .ctl {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    padding: 2px 6px 2px 10px;
+  }
+  .row.active .ctl {
+    background: rgba(0, 0, 0, 0.18);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  .ctl-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+    color: #888; margin-right: 4px;
+  }
+  .ctl-val {
+    min-width: 40px; text-align: center; font-variant-numeric: tabular-nums;
+    color: #ddd;
+  }
+  .rep-inf { color: #aaa; margin-left: 2px; }
   button {
     background: #272727; color: #f1f1f1; border: none;
     border-radius: 999px; padding: 4px 10px; cursor: pointer; font: inherit;
   }
   button:hover { background: #3f3f3f; }
   button.ghost { background: transparent; }
-  .play, .del, .reps, .time button { padding: 2px 8px; border-radius: 999px; }
+  .play, .del { padding: 2px 8px; border-radius: 999px; }
+  .ctl button { padding: 2px 8px; border-radius: 999px; }
   .empty { color: #aaa; padding: 12px 4px; }
   footer { margin-top: 8px; padding-top: 8px; border-top: 1px solid #272727; }
   footer a { color: #3ea6ff; text-decoration: none; font-size: 12px; }
