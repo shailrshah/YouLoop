@@ -51,7 +51,18 @@
         markers?.setActive(null);
       },
     });
-    markers = attachLoopMarkers(video);
+    markers = attachLoopMarkers(video, {
+      onDrag: (id, kind, time) => {
+        // Live update: only feed the engine so playback follows immediately.
+        // Persistence waits for pointerup — otherwise we'd write once per
+        // pixel of mouse motion.
+        engine.syncActive(id, { [kind]: time });
+      },
+      onCommit: (id, kind, time) => {
+        void updateLoop(id, { [kind]: time });
+        engine.syncActive(id, { [kind]: time });
+      },
+    });
     speed = video.playbackRate;
 
     document.addEventListener('keydown', onKey, true);
