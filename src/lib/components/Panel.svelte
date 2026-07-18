@@ -309,6 +309,7 @@
       <span>{speed.toFixed(2)}×</span>
       <button onclick={() => setHeaderSpeed(speed + 0.05)} aria-label="Faster">+</button>
     </div>
+    <a class="dash-link" href={dashboardUrl} target="_blank" rel="noopener">Dashboard →</a>
   </header>
 
   <div class="capture">
@@ -322,22 +323,35 @@
     {#each flat as { node, depth } (node.id)}
       <div class="row" class:active={activeId === node.id} style:padding-left={`${depth * 14}px`}>
         <div class="primary">
-          <button class="play" onclick={() => (activeId === node.id ? exitLoop() : activate(node))}>
-            {activeId === node.id ? '■' : '▶'}
+          <button
+            class="play"
+            onclick={() => (activeId === node.id ? exitLoop() : activate(node))}
+            aria-label={activeId === node.id ? 'Stop loop' : 'Play loop'}
+          >
+            {#if activeId === node.id}
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <rect x="2.5" y="2.5" width="7" height="7" rx="1" fill="currentColor" />
+              </svg>
+            {:else}
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M3 2 L10 6 L3 10 Z" fill="currentColor" />
+              </svg>
+            {/if}
           </button>
+          {#if activeId === node.id && repTotal != null}
+            <span class="rep-live" title="Current rep of total">
+              {rep + 1}<span class="rep-sep">/</span>{repTotal}
+            </span>
+          {/if}
           <input
             class="label"
             use:syncedInput={{ value: node.label, commit: (v) => updateLoop(node.id, { label: v }) }}
           />
           <span class="range">{fmt(node.startTime)}–{fmt(node.endTime)}</span>
           <span class="meta">
-            {#if node.speed !== 1}<span class="chip">{node.speed.toFixed(2)}×</span>{/if}
-            {#if node.repeatCount != null}
-              {#if activeId === node.id}
-                <span class="chip rep-live">rep {rep + 1} of {repTotal}</span>
-              {:else}
-                <span class="chip">+{node.repeatCount}</span>
-              {/if}
+            {#if node.speed !== speed}<span class="chip">{node.speed.toFixed(2)}×</span>{/if}
+            {#if node.repeatCount != null && activeId !== node.id}
+              <span class="chip">+{node.repeatCount}</span>
             {/if}
             <span class="plays" title="Times played">▷ {node.playCount}</span>
           </span>
@@ -385,9 +399,6 @@
       <div class="empty">No loops yet. Press <b>A</b> at the start, then <b>B</b> at the end.</div>
     {/if}
   </div>
-  <footer>
-    <a href={dashboardUrl} target="_blank" rel="noopener">Open Dashboard →</a>
-  </footer>
 </div>
 
 <style>
@@ -413,7 +424,7 @@
   .capture { display: flex; gap: 8px; margin-bottom: 8px; }
   .loops { max-height: 320px; overflow-y: auto; }
   .row {
-    padding: 2px 4px; border-radius: 8px;
+    padding: 4px 12px; border-radius: 8px;
   }
   .row.active { background: rgba(255, 0, 51, 0.18); }
   .row:hover { background: #272727; }
@@ -431,14 +442,20 @@
     background: #272727; border-radius: 999px; padding: 1px 6px;
     color: #ddd; font-size: 11px; font-variant-numeric: tabular-nums;
   }
-  .chip.rep-live { background: rgba(62, 166, 255, 0.2); color: #3ea6ff; }
   .plays { font-size: 12px; }
+  /* Live rep counter sits right after the play button, so it reads as loop
+     state rather than a floating notification chip. */
+  .rep-live {
+    color: #3ea6ff; font-size: 12px; font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2px; min-width: 38px;
+  }
+  .rep-live .rep-sep { color: rgba(62, 166, 255, 0.55); margin: 0 1px; }
   /* Secondary strip: hidden by default, revealed when the row is active or
      hovered. Rendered below the primary line — one column of quick controls. */
   .secondary {
     display: none;
     align-items: center; flex-wrap: wrap; gap: 6px;
-    padding: 4px 4px 6px 30px; /* align under label, past the play button */
+    padding: 4px 0 6px 40px; /* align under label, past the play button */
     color: #aaa;
   }
   .row.active .secondary,
@@ -473,10 +490,30 @@
   }
   button:hover { background: #3f3f3f; }
   button.ghost { background: transparent; }
-  .play, .del { padding: 2px 8px; border-radius: 999px; }
-  .ctl button { padding: 2px 8px; border-radius: 999px; }
+  .play {
+    width: 26px; height: 26px;
+    padding: 0; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .play svg { width: 14px; height: 14px; display: block; }
+  /* On the active (red) row, the button's own grey fill fights the red band.
+     Drop the fill so the icon sits directly on red; keep hover feedback. */
+  .row.active .play { background: transparent; }
+  .row.active .play:hover { background: rgba(255, 255, 255, 0.1); }
+  .del { padding: 2px 8px; border-radius: 999px; }
+  /* Cluster steppers are structural, not primary — recede them so the value
+     between them reads first. */
+  .ctl button {
+    padding: 1px 7px; border-radius: 999px;
+    background: transparent; color: #999; font-size: 12px;
+  }
+  .ctl button:hover { background: rgba(255, 255, 255, 0.08); color: #f1f1f1; }
   .empty { color: #aaa; padding: 12px 4px; }
-  footer { margin-top: 8px; padding-top: 8px; border-top: 1px solid #272727; }
-  footer a { color: #3ea6ff; text-decoration: none; font-size: 12px; }
-  footer a:hover { text-decoration: underline; }
+  .dash-link {
+    color: #3ea6ff; text-decoration: none; font-size: 12px;
+    padding: 3px 10px; border-radius: 999px;
+    border: 1px solid rgba(62, 166, 255, 0.35);
+  }
+  .dash-link:hover { background: rgba(62, 166, 255, 0.12); }
 </style>
