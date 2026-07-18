@@ -97,6 +97,10 @@
     engine.deactivate();
     activeId = null;
   }
+  async function removeLoop(id: string) {
+    if (activeId === id) exitLoop();
+    await deleteLoop(id);
+  }
   async function createLoop(start: number, end: number) {
     if (end <= start) return;
     const loop = await addLoop({
@@ -222,7 +226,7 @@
           {node.repeatCount == null ? '∞' : `×${node.repeatCount}`}
         </button>
         <span class="plays" title="Times played">▷ {node.playCount}</span>
-        <button class="del" onclick={() => deleteLoop(node.id)} aria-label="Delete">✕</button>
+        <button class="del" onclick={() => removeLoop(node.id)} aria-label="Delete">✕</button>
       </div>
     {/each}
     {#if !flat.length}
