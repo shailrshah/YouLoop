@@ -153,3 +153,61 @@ export async function setUiPref<K extends keyof UiPrefs>(key: K, value: UiPrefs[
   const current = await getUiPrefs();
   await browser.storage.local.set({ [UI_KEY]: { ...current, [key]: value } });
 }
+
+// ---- Import / export ----
+
+export interface ExportBundle {
+  format: 'youloop';
+  version: 1;
+  exportedAt: number;
+  loops: Loop[];
+  videos: Video[];
+}
+
+/** Snapshot the current DB, filtered to the given video ids. */
+export async function exportBundle(videoIds: string[]): Promise<ExportBundle> {
+  const db = await read();
+  const idSet = new Set(videoIds);
+  const loops = Object.values(db.loops).filter((l) => idSet.has(l.videoId));
+  const videos = videoIds
+    .map((id) => db.videos[id])
+    .filter((v): v is Video => !!v);
+  return {
+    format: 'youloop',
+    version: 1,
+    exportedAt: Date.now(),
+    loops,
+    videos,
+  };
+}
+
+/**
+ * Merge an exported bundle into local storage. Loops with an id that already
+ * exists are skipped (never overwritten). Videos are upserted so titles /
+ * channels get refreshed. Returns a count of what was added.
+ */
+export async function importBundle(bundle: ExportBundle): Promise<{ addedLoops: number; addedVideos: number; skippedLoops: number }> {
+  if (bundle?.format !== 'youloop') {
+    throw new Error('Not a YouLoop export file.');
+  }
+  return mutate((db) => {
+    let addedLoops = 0;
+    let addedVideos = 0;
+    let skippedLoops = 0;
+    for (const v of bundle.videos ?? []) {
+      if (!v?.videoId) continue;
+      if (!db.videos[v.videoId]) addedVideos++;
+      db.videos[v.videoId] = { ...db.videos[v.videoId], ...v };
+    }
+    for (const l of bundle.loops ?? []) {
+      if (!l?.id || !l.videoId) continue;
+      if (db.loops[l.id]) {
+        skippedLoops++;
+        continue;
+      }
+      db.loops[l.id] = l;
+      addedLoops++;
+    }
+    return { addedLoops, addedVideos, skippedLoops };
+  });
+}

@@ -1,6 +1,12 @@
 <script lang="ts">
   import { browser } from 'wxt/browser';
-  import { createDbStore, deleteLoop } from '@/lib/storage/store';
+  import {
+    createDbStore,
+    deleteLoop,
+    exportBundle,
+    importBundle,
+    type ExportBundle,
+  } from '@/lib/storage/store';
   import { buildLoopTree, type LoopNode } from '@/lib/loops/nesting';
   import type { DB, Loop, Video } from '@/lib/loops/model';
 
@@ -8,6 +14,13 @@
 
   let q = $state('');
   let collapsed = $state<Record<string, boolean>>({});
+
+  // Export modal state.
+  let exportOpen = $state(false);
+  let exportSelected = $state<Record<string, boolean>>({});
+  let importSummary = $state<string | null>(null);
+  let importError = $state<string | null>(null);
+  let importInput: HTMLInputElement;
 
   interface Group {
     video: Video;
@@ -76,6 +89,66 @@
   function toggle(videoId: string) {
     collapsed = { ...collapsed, [videoId]: !collapsed[videoId] };
   }
+
+  // ---- Export ----
+  function openExport() {
+    // Default all groups selected — that's usually what people want.
+    exportSelected = Object.fromEntries(groups.map((g) => [g.video.videoId, true]));
+    exportOpen = true;
+  }
+  function toggleExportAll(checked: boolean) {
+    exportSelected = Object.fromEntries(groups.map((g) => [g.video.videoId, checked]));
+  }
+  let exportAllChecked = $derived(
+    groups.length > 0 && groups.every((g) => exportSelected[g.video.videoId]),
+  );
+  let exportSomeChecked = $derived(
+    groups.some((g) => exportSelected[g.video.videoId]),
+  );
+  async function doExport() {
+    const ids = groups
+      .filter((g) => exportSelected[g.video.videoId])
+      .map((g) => g.video.videoId);
+    if (!ids.length) return;
+    const bundle = await exportBundle(ids);
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const stamp = new Date(bundle.exportedAt).toISOString().slice(0, 10);
+    a.download = `youloop-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    exportOpen = false;
+  }
+
+  // ---- Import ----
+  function triggerImport() {
+    importSummary = null;
+    importError = null;
+    importInput?.click();
+  }
+  async function handleImportFile(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ''; // allow re-importing the same file
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as ExportBundle;
+      const result = await importBundle(parsed);
+      importSummary =
+        `Added ${result.addedLoops} loop${result.addedLoops === 1 ? '' : 's'}` +
+        (result.addedVideos ? ` and ${result.addedVideos} video${result.addedVideos === 1 ? '' : 's'}` : '') +
+        (result.skippedLoops ? `. Skipped ${result.skippedLoops} existing loop${result.skippedLoops === 1 ? '' : 's'}.` : '.');
+    } catch (err) {
+      importError = err instanceof Error ? err.message : 'Import failed.';
+    }
+  }
 </script>
 
 <main>
@@ -84,7 +157,29 @@
     <span class="sub">{totalLoops} loops across {groups.length} videos</span>
     <div class="spacer"></div>
     <input class="search" placeholder="Search videos or loops…" bind:value={q} />
+    <button class="secondary" onclick={triggerImport}>Import</button>
+    <button class="secondary" onclick={openExport} disabled={!groups.length}>Export</button>
+    <input
+      bind:this={importInput}
+      type="file"
+      accept="application/json,.json"
+      onchange={handleImportFile}
+      style="display: none"
+    />
   </header>
+
+  {#if importSummary}
+    <div class="toast toast-ok" role="status">
+      {importSummary}
+      <button class="toast-close" onclick={() => (importSummary = null)} aria-label="Dismiss">✕</button>
+    </div>
+  {/if}
+  {#if importError}
+    <div class="toast toast-err" role="alert">
+      Import failed: {importError}
+      <button class="toast-close" onclick={() => (importError = null)} aria-label="Dismiss">✕</button>
+    </div>
+  {/if}
 
   {#each groups as g (g.video.videoId)}
     <section class="group">
@@ -120,6 +215,50 @@
     </div>
   {/if}
 </main>
+
+{#if exportOpen}
+  <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Export loops">
+    <div class="modal">
+      <header class="modal-head">
+        <h2>Export loops</h2>
+        <button class="modal-close" onclick={() => (exportOpen = false)} aria-label="Close">✕</button>
+      </header>
+      <div class="modal-body">
+        <label class="export-row export-all">
+          <input
+            type="checkbox"
+            checked={exportAllChecked}
+            indeterminate={exportSomeChecked && !exportAllChecked}
+            onchange={(e) => toggleExportAll((e.currentTarget as HTMLInputElement).checked)}
+          />
+          <span class="export-title">Select all</span>
+          <span class="export-count">{groups.length} videos</span>
+        </label>
+        <div class="export-list">
+          {#each groups as g (g.video.videoId)}
+            <label class="export-row">
+              <input
+                type="checkbox"
+                bind:checked={exportSelected[g.video.videoId]}
+              />
+              <span class="export-title">{g.video.title}</span>
+              {#if g.video.channel}<span class="export-channel">{g.video.channel}</span>{/if}
+              <span class="export-count">{g.loopCount} loops</span>
+            </label>
+          {/each}
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <button class="ghost" onclick={() => (exportOpen = false)}>Cancel</button>
+        <button
+          class="primary"
+          onclick={doExport}
+          disabled={!exportSomeChecked}
+        >Download JSON</button>
+      </footer>
+    </div>
+  </div>
+{/if}
 
 <style>
   :global(body) { margin: 0; background: #0f0f0f; color: #f1f1f1; font-family: 'Roboto', 'Arial', sans-serif; }
@@ -157,5 +296,53 @@
     padding: 4px 10px; cursor: pointer; font: inherit;
   }
   button:hover { background: #3f3f3f; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:disabled:hover { background: #272727; }
   .empty { color: #aaa; padding: 40px 8px; text-align: center; }
+  .secondary { background: #272727; }
+  .primary { background: #3ea6ff; color: #0f0f0f; font-weight: 600; }
+  .primary:hover { background: #65b8ff; }
+  .primary:disabled:hover { background: #3ea6ff; }
+  .ghost { background: transparent; }
+  .toast {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; margin-bottom: 12px; border-radius: 10px;
+    font-size: 13px; line-height: 1.4;
+  }
+  .toast-ok { background: rgba(62, 166, 255, 0.12); color: #d4d4d4; border: 1px solid rgba(62, 166, 255, 0.25); }
+  .toast-err { background: rgba(255, 60, 60, 0.14); color: #f4d4d4; border: 1px solid rgba(255, 60, 60, 0.35); }
+  .toast-close { background: transparent; padding: 2px 6px; margin-left: auto; }
+  .toast-close:hover { background: rgba(255, 255, 255, 0.08); }
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; padding: 20px;
+  }
+  .modal {
+    background: #181818; border: 1px solid #272727; border-radius: 12px;
+    width: 100%; max-width: 520px; max-height: 80vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+  .modal-head { display: flex; align-items: center; padding: 14px 16px 8px; }
+  .modal-head h2 { flex: 1; margin: 0; font-size: 16px; }
+  .modal-close { background: transparent; padding: 2px 6px; }
+  .modal-close:hover { background: #272727; }
+  .modal-body { flex: 1; overflow-y: auto; padding: 4px 16px 8px; }
+  .modal-foot {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 12px 16px; border-top: 1px solid #272727;
+  }
+  .export-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 8px; cursor: pointer;
+    font-size: 13px;
+  }
+  .export-row:hover { background: #202020; }
+  .export-row input[type="checkbox"] { flex-shrink: 0; margin: 0; accent-color: #3ea6ff; }
+  .export-all { border-bottom: 1px solid #272727; border-radius: 8px 8px 0 0; margin-bottom: 4px; }
+  .export-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .export-channel { color: #aaa; font-size: 12px; }
+  .export-count { color: #aaa; font-size: 12px; flex-shrink: 0; }
 </style>

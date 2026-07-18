@@ -184,7 +184,6 @@ undeclared property.
 | `b` | A/B quick-set: set loop **end** at current time + create loop |
 | `[` / `]` | Previous / next loop in the list |
 | `\` | Exit / deactivate current loop |
-| `-` / `=` | Header speed down / up by 0.05 |
 | `,` / `.` | Nudge active loop start / end by 1s |
 
 Handled on `document` in capture phase.

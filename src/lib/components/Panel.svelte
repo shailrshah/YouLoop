@@ -37,6 +37,7 @@
   let markers: LoopMarkers | null = null;
   let playerBtn: PlayerButtonHandle | null = null;
   let collapsed = $state(true);
+  const cleanupFns: (() => void)[] = [];
   let activeId = $state<string | null>(null);
   let rep = $state(0);
   let repTotal = $state<number | null>(null);
@@ -72,6 +73,17 @@
       },
     });
     speed = video.playbackRate;
+    // Mirror YouTube's own speed control so the panel can hide a loop's
+    // speed chip when it matches the current ambient rate.
+    const onRateChange = () => {
+      // If we're mid-loop, video.playbackRate is loop.speed — don't overwrite
+      // the ambient mirror with it.
+      if (engine?.activeLoop) return;
+      speed = video.playbackRate;
+    };
+    video.addEventListener('ratechange', onRateChange);
+    cleanupFns.push(() => video.removeEventListener('ratechange', onRateChange));
+
     // If the user hasn't dismissed the first-loop coach mark yet, arm it —
     // the effect below only shows it once they have at least one loop.
     void isHintDismissed('first-loop').then((dismissed) => {
@@ -126,6 +138,8 @@
     markers = null;
     playerBtn?.destroy();
     playerBtn = null;
+    for (const fn of cleanupFns) fn();
+    cleanupFns.length = 0;
     document.removeEventListener('keydown', onKey, true);
   });
 
@@ -267,14 +281,6 @@
   function nudgeLoopSpeed(loop: Loop, delta: number) {
     void setLoopSpeed(loop, loop.speed + delta);
   }
-  function setHeaderSpeed(s: number) {
-    speed = Math.min(4, Math.max(0.05, +s.toFixed(2)));
-    // If a loop is active, the loop is currently driving playbackRate; just
-    // update the ambient rate so exiting restores the user's choice. Otherwise
-    // apply directly.
-    if (activeId) engine.setAmbientRate(speed);
-    else video.playbackRate = speed;
-  }
   const DEFAULT_FINITE_REPS = 5;
   function setReps(loop: Loop, next: number | null) {
     if (next === loop.repeatCount) return;
@@ -355,8 +361,6 @@
         if (!active) return;
         exitLoop();
         break;
-      case '-': setHeaderSpeed(speed - 0.05); break;
-      case '=': setHeaderSpeed(speed + 0.05); break;
       case ',':
         if (!active) return;
         void nudge(active, 'startTime', -1);
@@ -391,11 +395,6 @@
       <button class="ghost" onclick={exitLoop}>Exit loop (\)</button>
     {/if}
     <div class="spacer"></div>
-    <div class="speed">
-      <button onclick={() => setHeaderSpeed(speed - 0.05)} aria-label="Slower">−</button>
-      <span>{speed.toFixed(2)}×</span>
-      <button onclick={() => setHeaderSpeed(speed + 0.05)} aria-label="Faster">+</button>
-    </div>
     <a class="dash-link" href={dashboardUrl} target="_blank" rel="noopener">Dashboard →</a>
   </header>
 
@@ -525,8 +524,6 @@
   header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .brand { font-weight: 600; letter-spacing: 0.2px; }
   .spacer { flex: 1; }
-  .speed { display: flex; align-items: center; gap: 6px; }
-  .speed span { min-width: 42px; text-align: center; }
   .loops { max-height: 320px; overflow-y: auto; }
   .row {
     padding: 4px 12px; border-radius: 8px;

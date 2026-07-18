@@ -33,7 +33,6 @@ codebase.
 | `a` / `b` | Set loop start / set end + create loop |
 | `[` / `]` | Previous / next loop |
 | `\` | Exit the active loop |
-| `-` / `=` | Speed down / up by 0.05 |
 | `,` / `.` | Nudge active loop start / end by 1s |
 
 ## Develop
