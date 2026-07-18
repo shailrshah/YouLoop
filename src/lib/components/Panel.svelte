@@ -112,18 +112,35 @@
     node.value = fmt();
     let commit = params.commit;
     const onChange = () => commit(node.value);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        commit(node.value);
+        node.blur();
+      } else if (e.key === 'Escape') {
+        // Revert to the last-committed value and drop focus.
+        node.value = fmt();
+        node.blur();
+      }
+    };
     node.addEventListener('change', onChange);
+    node.addEventListener('keydown', onKey);
     return {
       update(next: { value: T; commit: (raw: string) => void; format?: (v: T) => string }) {
         commit = next.commit;
         params = next;
         const rendered = next.format ? next.format(next.value) : String(next.value);
-        if (document.activeElement !== node && node.value !== rendered) {
+        // document.activeElement retargets to the shadow host from outside the
+        // shadow tree, so it never equals `node` even when the user is typing
+        // in it. Walk up shadow roots to find the true focused element.
+        const root = node.getRootNode() as ShadowRoot | Document;
+        const focused = (root as ShadowRoot).activeElement ?? document.activeElement;
+        if (focused !== node && node.value !== rendered) {
           node.value = rendered;
         }
       },
       destroy() {
         node.removeEventListener('change', onChange);
+        node.removeEventListener('keydown', onKey);
       },
     };
   }
@@ -246,6 +263,13 @@
     activate(flat[nextIndex].node);
   }
 
+  // Stop key events originating in our panel from bubbling up to YouTube's
+  // document/window listeners — otherwise typing in a label field fires
+  // YouTube's own shortcuts (c=captions, f=fullscreen, k=play/pause, etc.).
+  function panelKeyGuard(e: KeyboardEvent) {
+    e.stopPropagation();
+  }
+
   function onKey(e: KeyboardEvent) {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     // Our inputs live inside a Shadow DOM, so `e.target` is retargeted to the
@@ -300,7 +324,15 @@
   }
 </script>
 
-<div class="yl">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div
+  class="yl"
+  role="group"
+  aria-label="YouLoop panel"
+  onkeydown={panelKeyGuard}
+  onkeyup={panelKeyGuard}
+  onkeypress={panelKeyGuard}
+>
   <header>
     <span class="brand">YouLoop</span>
     <div class="spacer"></div>

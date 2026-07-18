@@ -13,9 +13,12 @@ codebase.
 - In-player panel below the video with speed control (0.05 steps, pitch preserved)
 - Loops and **sub-loops**, nested automatically by time containment
 - Per-loop **speed** and (planned) pitch, remembered and applied on activation
+- Active loop **highlighted on YouTube's progress bar**; click outside the
+  band to exit the loop
 - Clip key `0`: jump to the active loop's start and keep playing
 - `+/-` 1-second nudges on each loop's start/end
 - Repeat a loop **N times**, then exit, with a live "rep X of N" counter
+  shown on the loop's row
 - A/B quick-set (`a` then `b`) to capture a loop while watching
 - Play-count tracking per loop
 - Cross-video **dashboard**: grouped by video, collapsible, searchable, with
