@@ -122,8 +122,14 @@
       pendingStart = null;
     }
   }
+  const MIN_LOOP = 0.1; // seconds; keep start < end so the engine never wraps every tick.
   async function nudge(loop: Loop, field: 'startTime' | 'endTime', delta: number) {
-    const next = Math.max(0, (loop[field] as number) + delta);
+    const raw = (loop[field] as number) + delta;
+    const next =
+      field === 'startTime'
+        ? Math.min(loop.endTime - MIN_LOOP, Math.max(0, raw))
+        : Math.max(loop.startTime + MIN_LOOP, raw);
+    if (next === loop[field]) return;
     await updateLoop(loop.id, { [field]: next });
     if (activeId === loop.id) engine.syncActive({ ...loop, [field]: next });
   }

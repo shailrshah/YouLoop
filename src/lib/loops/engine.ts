@@ -110,6 +110,11 @@ export class LoopEngine {
       this.rafId = null;
       return;
     }
+    if (loop.endTime <= loop.startTime) {
+      // Degenerate range would trigger every frame — pause instead of thrashing.
+      this.rafId = requestAnimationFrame(this.tick);
+      return;
+    }
     if (this.video.currentTime >= loop.endTime) {
       this.cb.onPlayCount?.(loop.id); // completed a pass
       if (loop.repeatCount != null) {
