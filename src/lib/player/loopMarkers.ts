@@ -30,10 +30,11 @@ export function attachLoopMarkers(video: HTMLVideoElement) {
     'position: absolute',
     'top: 0',
     'bottom: 0',
-    // Match panel accent (#ff0033) but keep it subtle over the red fill.
-    'background: rgba(62, 166, 255, 0.35)',
-    'border-left: 2px solid #3ea6ff',
-    'border-right: 2px solid #3ea6ff',
+    // Yellow reads clearly on top of both YouTube's red played fill and the
+    // grey unplayed track; blue got muddy over red.
+    'background: rgba(255, 225, 74, 0.35)',
+    'border-left: 2px solid #ffe14a',
+    'border-right: 2px solid #ffe14a',
     'box-sizing: border-box',
   ].join(';');
   overlay.appendChild(band);
