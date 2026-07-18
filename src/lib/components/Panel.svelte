@@ -303,9 +303,6 @@
 <div class="yl">
   <header>
     <span class="brand">YouLoop</span>
-    {#if activeId && repTotal != null}
-      <span class="rep">rep {rep} of {repTotal}</span>
-    {/if}
     <div class="spacer"></div>
     <div class="speed">
       <button onclick={() => setHeaderSpeed(speed - 0.05)} aria-label="Slower">−</button>
@@ -335,7 +332,13 @@
           <span class="range">{fmt(node.startTime)}–{fmt(node.endTime)}</span>
           <span class="meta">
             {#if node.speed !== 1}<span class="chip">{node.speed.toFixed(2)}×</span>{/if}
-            {#if node.repeatCount != null}<span class="chip">×{node.repeatCount}</span>{/if}
+            {#if node.repeatCount != null}
+              {#if activeId === node.id}
+                <span class="chip rep-live">rep {rep + 1} of {repTotal}</span>
+              {:else}
+                <span class="chip">+{node.repeatCount}</span>
+              {/if}
+            {/if}
             <span class="plays" title="Times played">▷ {node.playCount}</span>
           </span>
           <button class="del" onclick={() => removeLoop(node.id)} aria-label="Delete">✕</button>
@@ -365,7 +368,7 @@
               <button onclick={() => toFinite(node)} title="Set a repeat count">∞</button>
             {:else}
               <button onclick={() => nudgeReps(node, -1)} aria-label="One fewer rep">−</button>
-              <span class="ctl-val">×{node.repeatCount}</span>
+              <span class="ctl-val">+{node.repeatCount}</span>
               <button onclick={() => nudgeReps(node, 1)} aria-label="One more rep">+</button>
               <button
                 class="rep-inf"
@@ -404,7 +407,6 @@
   * { box-sizing: border-box; }
   header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .brand { font-weight: 600; letter-spacing: 0.2px; }
-  .rep { color: #3ea6ff; font-size: 12px; }
   .spacer { flex: 1; }
   .speed { display: flex; align-items: center; gap: 6px; }
   .speed span { min-width: 42px; text-align: center; }
@@ -429,6 +431,7 @@
     background: #272727; border-radius: 999px; padding: 1px 6px;
     color: #ddd; font-size: 11px; font-variant-numeric: tabular-nums;
   }
+  .chip.rep-live { background: rgba(62, 166, 255, 0.2); color: #3ea6ff; }
   .plays { font-size: 12px; }
   /* Secondary strip: hidden by default, revealed when the row is active or
      hovered. Rendered below the primary line — one column of quick controls. */
