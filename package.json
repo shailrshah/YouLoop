@@ -4,6 +4,8 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
+  "author": "Shail R. Shah",
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",

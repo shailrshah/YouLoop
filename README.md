@@ -62,3 +62,7 @@ v1 in progress. Independent pitch shifting (change pitch without changing speed)
 is planned for a later phase via the Web Audio API.
 
 See [DESIGN.md](./DESIGN.md) for the full design.
+
+## License
+
+[MIT](./LICENSE) © Shail R. Shah
