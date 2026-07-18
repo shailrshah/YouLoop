@@ -14,6 +14,21 @@ async function write(db: DB): Promise<void> {
   await browser.storage.local.set({ [KEY]: db });
 }
 
+// Serialize all mutations so two overlapping read-modify-writes can't clobber
+// each other. chrome.storage has no CAS, and the wrap fires from rAF while the
+// user may also be nudging or renaming.
+let writeChain: Promise<unknown> = Promise.resolve();
+function mutate<T>(fn: (db: DB) => T | Promise<T>): Promise<T> {
+  const next = writeChain.then(async () => {
+    const db = await read();
+    const result = await fn(db);
+    await write(db);
+    return result;
+  });
+  writeChain = next.catch(() => {});
+  return next;
+}
+
 /** Live, cross-surface readable of the whole DB (panel + dashboard stay synced). */
 export function createDbStore(): Readable<DB> & { reload: () => void } {
   const { subscribe, set } = writable<DB>(EMPTY_DB, () => {
@@ -35,10 +50,10 @@ export function createDbStore(): Readable<DB> & { reload: () => void } {
 
 // ---- CRUD (mutate storage; the onChanged listener re-pushes to all stores) ----
 
-export async function upsertVideo(v: Video): Promise<void> {
-  const db = await read();
-  db.videos[v.videoId] = { ...db.videos[v.videoId], ...v };
-  await write(db);
+export function upsertVideo(v: Video): Promise<void> {
+  return mutate((db) => {
+    db.videos[v.videoId] = { ...db.videos[v.videoId], ...v };
+  });
 }
 
 export async function loopsForVideo(videoId: string): Promise<Loop[]> {
@@ -46,37 +61,61 @@ export async function loopsForVideo(videoId: string): Promise<Loop[]> {
   return Object.values(db.loops).filter((l) => l.videoId === videoId);
 }
 
-export async function addLoop(
+export function addLoop(
   input: Omit<Loop, 'id' | 'createdAt' | 'updatedAt' | 'playCount'>,
 ): Promise<Loop> {
-  const db = await read();
-  const now = Date.now();
-  const loop: Loop = { id: nanoid(), playCount: 0, createdAt: now, updatedAt: now, ...input };
-  db.loops[loop.id] = loop;
-  await write(db);
-  return loop;
+  return mutate((db) => {
+    const now = Date.now();
+    const loop: Loop = { id: nanoid(), playCount: 0, createdAt: now, updatedAt: now, ...input };
+    db.loops[loop.id] = loop;
+    return loop;
+  });
 }
 
-export async function updateLoop(id: string, patch: Partial<Loop>): Promise<void> {
-  const db = await read();
-  const existing = db.loops[id];
-  if (!existing) return;
-  db.loops[id] = { ...existing, ...patch, updatedAt: Date.now() };
-  await write(db);
+export function updateLoop(id: string, patch: Partial<Loop>): Promise<void> {
+  return mutate((db) => {
+    const existing = db.loops[id];
+    if (!existing) return;
+    db.loops[id] = { ...existing, ...patch, updatedAt: Date.now() };
+  });
 }
 
-export async function incrementPlayCount(id: string): Promise<void> {
-  const db = await read();
-  const l = db.loops[id];
-  if (!l) return;
-  l.playCount = (l.playCount ?? 0) + 1;
-  await write(db);
+// Batch play-count writes: the engine calls this on every lap of a short
+// loop, and each write triggers a re-render of every {#each} row cross-tab.
+// Flush every second, or on tab hide.
+const pendingPlayCounts = new Map<string, number>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+function flushPlayCounts(): Promise<void> {
+  if (!pendingPlayCounts.size) return Promise.resolve();
+  const batch = new Map(pendingPlayCounts);
+  pendingPlayCounts.clear();
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  return mutate((db) => {
+    for (const [id, delta] of batch) {
+      const l = db.loops[id];
+      if (l) l.playCount = (l.playCount ?? 0) + delta;
+    }
+  });
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') void flushPlayCounts();
+  });
 }
 
-export async function deleteLoop(id: string): Promise<void> {
-  const db = await read();
-  delete db.loops[id];
-  await write(db);
+export function incrementPlayCount(id: string): Promise<void> {
+  pendingPlayCounts.set(id, (pendingPlayCounts.get(id) ?? 0) + 1);
+  if (!flushTimer) flushTimer = setTimeout(() => void flushPlayCounts(), 1000);
+  return Promise.resolve();
+}
+
+export function deleteLoop(id: string): Promise<void> {
+  return mutate((db) => {
+    delete db.loops[id];
+  });
 }
 
 export function nextLoopName(existingCount: number): string {

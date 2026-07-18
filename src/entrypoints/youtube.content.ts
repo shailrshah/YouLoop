@@ -11,6 +11,8 @@ export default defineContentScript({
   async main(ctx) {
     let ui: Awaited<ReturnType<typeof createShadowRootUi>> | null = null;
     let app: Record<string, any> | null = null;
+    let currentVideoId: string | null = null;
+    let anchorObserver: MutationObserver | null = null;
 
     const remove = () => {
       if (app) {
@@ -19,6 +21,22 @@ export default defineContentScript({
       }
       ui?.remove();
       ui = null;
+      anchorObserver?.disconnect();
+      anchorObserver = null;
+    };
+
+    // If YouTube replaces the #below subtree (ad break exit, layout switch),
+    // the shadow root gets orphaned. Watch and remount when that happens.
+    const watchAnchor = (host: Element, videoId: string) => {
+      anchorObserver?.disconnect();
+      anchorObserver = new MutationObserver(() => {
+        if (!host.isConnected) {
+          remove();
+          if (location.pathname === '/watch') void retry(videoId);
+        }
+      });
+      const parent = host.parentNode as Node | null;
+      if (parent) anchorObserver.observe(parent, { childList: true });
     };
 
     const create = async (videoId: string): Promise<boolean> => {
@@ -42,15 +60,22 @@ export default defineContentScript({
         },
       });
       ui.mount();
+      // ui.shadowHost isn't part of WXT's public typings; fall back to the
+      // first-child assumption if it's not exposed.
+      const host = (ui as unknown as { shadowHost?: Element }).shadowHost
+        ?? (anchor.firstElementChild as Element | null);
+      if (host) watchAnchor(host, videoId);
       return true;
     };
 
     const retry = async (videoId: string, tries = 0) => {
+      if (currentVideoId !== videoId) return; // navigated away mid-retry
       if (await create(videoId)) return;
       if (tries < 20) setTimeout(() => void retry(videoId, tries + 1), 500);
     };
 
     onVideoChange((videoId) => {
+      currentVideoId = videoId;
       remove();
       if (videoId && location.pathname === '/watch') void retry(videoId);
     });

@@ -35,6 +35,7 @@
   let pendingStart = $state<number | null>(null); // A/B quick-set
   const dashboardUrl = (browser.runtime.getURL as (p: string) => string)('/dashboard.html');
   let pendingHashId: string | null = null;
+  let deepLinkAttempts = 0;
 
   onMount(() => {
     engine = new LoopEngine(video, {
@@ -48,8 +49,6 @@
       },
     });
     speed = video.playbackRate;
-    const info = scrapeVideoInfo();
-    if (info.title) void upsertVideo({ videoId, ...info, lastPlayedAt: Date.now() });
 
     document.addEventListener('keydown', onKey, true);
 
@@ -58,20 +57,58 @@
   });
 
   // Auto-activate a loop when arriving via a dashboard deep-link (#youloop=ID).
+  // Give up after a few store updates so a stale hash (loop deleted, or from a
+  // different videoId) doesn't linger; also clear it so reloading the page
+  // doesn't silently re-activate a loop the user has since exited.
   $effect(() => {
-    if (engine && pendingHashId) {
-      const target = loops.find((x) => x.id === pendingHashId);
-      if (target) {
-        activate(target);
-        pendingHashId = null;
-      }
+    if (!engine || !pendingHashId) return;
+    const target = loops.find((x) => x.id === pendingHashId);
+    if (target) {
+      activate(target);
+      pendingHashId = null;
+      clearHash();
+      return;
+    }
+    if (++deepLinkAttempts >= 5) {
+      pendingHashId = null;
+      clearHash();
     }
   });
+
+  function clearHash() {
+    if (location.hash.includes('youloop=')) {
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+  }
 
   onDestroy(() => {
     engine?.destroy();
     document.removeEventListener('keydown', onKey, true);
   });
+
+  // Sync the input's value from storage only when the user isn't editing, so
+  // external writes (play-count increments, cross-tab edits) never clobber
+  // a caret mid-type or drop keystrokes.
+  function syncedLabel(
+    node: HTMLInputElement,
+    params: { value: string; commit: (v: string) => void },
+  ) {
+    node.value = params.value;
+    let commit = params.commit;
+    const onChange = () => commit(node.value);
+    node.addEventListener('change', onChange);
+    return {
+      update(next: { value: string; commit: (v: string) => void }) {
+        commit = next.commit;
+        if (document.activeElement !== node && node.value !== next.value) {
+          node.value = next.value;
+        }
+      },
+      destroy() {
+        node.removeEventListener('change', onChange);
+      },
+    };
+  }
 
   function flatten(nodes: LoopNode[], depth = 0): { node: LoopNode; depth: number }[] {
     const out: { node: LoopNode; depth: number }[] = [];
@@ -88,6 +125,8 @@
     return `${m}:${String(s % 60).padStart(2, '0')}`;
   }
 
+  const MIN_LOOP = 0.1; // seconds; keep start < end so the engine never wraps every tick.
+
   // ---- actions ----
   function activate(loop: Loop) {
     engine.activate(loop);
@@ -102,7 +141,11 @@
     await deleteLoop(id);
   }
   async function createLoop(start: number, end: number) {
-    if (end <= start) return;
+    if (end - start < MIN_LOOP) return;
+    const info = scrapeVideoInfo(videoId);
+    if (info.title) {
+      void upsertVideo({ videoId, ...info, lastPlayedAt: Date.now() });
+    }
     const loop = await addLoop({
       videoId,
       label: nextLoopName(loops.length),
@@ -122,7 +165,6 @@
       pendingStart = null;
     }
   }
-  const MIN_LOOP = 0.1; // seconds; keep start < end so the engine never wraps every tick.
   async function nudge(loop: Loop, field: 'startTime' | 'endTime', delta: number) {
     const raw = (loop[field] as number) + delta;
     const next =
@@ -131,22 +173,35 @@
         : Math.max(loop.startTime + MIN_LOOP, raw);
     if (next === loop[field]) return;
     await updateLoop(loop.id, { [field]: next });
-    if (activeId === loop.id) engine.syncActive({ ...loop, [field]: next });
+    if (activeId === loop.id) engine.syncActive(loop.id, { [field]: next });
   }
   async function setLoopSpeed(loop: Loop, s: number) {
     const clamped = Math.min(4, Math.max(0.05, +s.toFixed(2)));
     await updateLoop(loop.id, { speed: clamped });
-    if (activeId === loop.id) engine.syncActive({ ...loop, speed: clamped });
+    if (activeId === loop.id) engine.syncActive(loop.id, { speed: clamped });
   }
   function setHeaderSpeed(s: number) {
     speed = Math.min(4, Math.max(0.05, +s.toFixed(2)));
-    video.playbackRate = speed;
+    // If a loop is active, the loop is currently driving playbackRate; just
+    // update the ambient rate so exiting restores the user's choice. Otherwise
+    // apply directly.
+    if (activeId) engine.setAmbientRate(speed);
+    else video.playbackRate = speed;
   }
   function cycleReps(loop: Loop) {
     // null -> 2 -> 3 -> 5 -> 10 -> null
     const order = [null, 2, 3, 5, 10];
     const i = order.findIndex((v) => v === loop.repeatCount);
-    void updateLoop(loop.id, { repeatCount: order[(i + 1) % order.length] });
+    const next = order[(i + 1) % order.length];
+    void updateLoop(loop.id, { repeatCount: next });
+    if (activeId === loop.id) {
+      engine.syncActive(loop.id, { repeatCount: next });
+      // Restart the rep counter and refresh the header display; changing the
+      // count mid-play should reset progress, not keep an out-of-band value.
+      engine.resetRep();
+      rep = 0;
+      repTotal = next;
+    }
   }
   function activeIndex(): number {
     return flat.findIndex((f) => f.node.id === activeId);
@@ -154,25 +209,49 @@
   function step(dir: 1 | -1) {
     if (!flat.length) return;
     const i = activeIndex();
-    const next = flat[(i + dir + flat.length) % flat.length];
-    if (next) activate(next.node);
+    // From idle: forward -> first, backward -> last. Otherwise wrap normally.
+    const nextIndex =
+      i < 0 ? (dir === 1 ? 0 : flat.length - 1) : (i + dir + flat.length) % flat.length;
+    activate(flat[nextIndex].node);
   }
 
   function onKey(e: KeyboardEvent) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const el = e.target as HTMLElement;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
     const active = engine?.activeLoop ?? null;
+    // Only handle a key when the action is meaningful right now — otherwise
+    // let YouTube (or the browser) see it. Keys that overlap YouTube's own
+    // bindings (`0`, `,`, `.`) fall through when no loop is active.
     switch (e.key) {
-      case '0': engine?.clipToStart(); break;
+      case '0':
+        if (!active) return;
+        engine.clipToStart();
+        break;
       case 'a': pendingStart = video.currentTime; break;
       case 'b': quickSet(); break;
-      case '[': step(-1); break;
-      case ']': step(1); break;
-      case '\\': exitLoop(); break;
+      case '[':
+        if (!flat.length) return;
+        step(-1);
+        break;
+      case ']':
+        if (!flat.length) return;
+        step(1);
+        break;
+      case '\\':
+        if (!active) return;
+        exitLoop();
+        break;
       case '-': setHeaderSpeed(speed - 0.05); break;
       case '=': setHeaderSpeed(speed + 0.05); break;
-      case ',': if (active) void nudge(active, 'startTime', -1); break;
-      case '.': if (active) void nudge(active, 'endTime', 1); break;
+      case ',':
+        if (!active) return;
+        void nudge(active, 'startTime', -1);
+        break;
+      case '.':
+        if (!active) return;
+        void nudge(active, 'endTime', 1);
+        break;
       default: return;
     }
     e.preventDefault();
@@ -209,8 +288,7 @@
         </button>
         <input
           class="label"
-          value={node.label}
-          onchange={(e) => updateLoop(node.id, { label: (e.currentTarget as HTMLInputElement).value })}
+          use:syncedLabel={{ value: node.label, commit: (v) => updateLoop(node.id, { label: v }) }}
         />
         <div class="time">
           <button onclick={() => nudge(node, 'startTime', -1)}>−</button>
