@@ -116,6 +116,10 @@ export class LoopEngine {
   }
 
   destroy(): void {
+    // Restore ambient rate if a loop was active — otherwise a mid-loop
+    // SPA nav or panel teardown leaves the video stuck at loop.speed,
+    // which YouTube then persists to the next video via its own memory.
+    this.deactivate();
     this.stop();
     this.video.removeEventListener('seeking', this.onSeeking);
   }

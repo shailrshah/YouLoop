@@ -69,6 +69,7 @@ export function attachLoopMarkers(video: HTMLVideoElement, cb: MarkerCallbacks =
       'user-select: none',
       'touch-action: none',
     ].join(';');
+    flag.title = `Drag to reshape loop ${label === 'A' ? 'start' : 'end'}`;
     pin.appendChild(flag);
     return { pin, flag };
   };

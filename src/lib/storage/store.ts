@@ -4,6 +4,8 @@ import { nanoid } from 'nanoid';
 import { EMPTY_DB, type DB, type Loop, type Video } from '@/lib/loops/model';
 
 const KEY = 'youloop';
+const HINTS_KEY = 'youloop:hints';
+const UI_KEY = 'youloop:ui';
 
 async function read(): Promise<DB> {
   const res = await browser.storage.local.get(KEY);
@@ -120,4 +122,34 @@ export function deleteLoop(id: string): Promise<void> {
 
 export function nextLoopName(existingCount: number): string {
   return `Loop #${existingCount + 1}`;
+}
+
+// ---- One-time hints (coach marks). Dismissed keys are persisted per install. ----
+
+type DismissedHints = Record<string, true>;
+
+export async function isHintDismissed(hint: string): Promise<boolean> {
+  const res = await browser.storage.local.get(HINTS_KEY);
+  const set = (res[HINTS_KEY] as DismissedHints | undefined) ?? {};
+  return !!set[hint];
+}
+
+export async function dismissHint(hint: string): Promise<void> {
+  const res = await browser.storage.local.get(HINTS_KEY);
+  const set = { ...((res[HINTS_KEY] as DismissedHints | undefined) ?? {}), [hint]: true as const };
+  await browser.storage.local.set({ [HINTS_KEY]: set });
+}
+
+// ---- Global UI preferences (collapsed panel, etc.) ----
+
+interface UiPrefs { collapsed?: boolean }
+
+export async function getUiPrefs(): Promise<UiPrefs> {
+  const res = await browser.storage.local.get(UI_KEY);
+  return (res[UI_KEY] as UiPrefs | undefined) ?? {};
+}
+
+export async function setUiPref<K extends keyof UiPrefs>(key: K, value: UiPrefs[K]): Promise<void> {
+  const current = await getUiPrefs();
+  await browser.storage.local.set({ [UI_KEY]: { ...current, [key]: value } });
 }

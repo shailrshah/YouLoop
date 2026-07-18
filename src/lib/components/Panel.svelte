@@ -11,9 +11,14 @@
     incrementPlayCount,
     upsertVideo,
     nextLoopName,
+    isHintDismissed,
+    dismissHint,
+    getUiPrefs,
+    setUiPref,
   } from '@/lib/storage/store';
   import { scrapeVideoInfo } from '@/lib/player/video';
   import { attachLoopMarkers, type LoopMarkers } from '@/lib/player/loopMarkers';
+  import { attachPlayerButton, type PlayerButtonHandle } from '@/lib/player/playerButton';
   import { browser } from 'wxt/browser';
 
   let { videoId, video }: { videoId: string; video: HTMLVideoElement } = $props();
@@ -30,6 +35,8 @@
   // Engine + active-state mirror (engine is imperative; mirror to reactive state).
   let engine: LoopEngine;
   let markers: LoopMarkers | null = null;
+  let playerBtn: PlayerButtonHandle | null = null;
+  let collapsed = $state(true);
   let activeId = $state<string | null>(null);
   let rep = $state(0);
   let repTotal = $state<number | null>(null);
@@ -38,6 +45,7 @@
   const dashboardUrl = (browser.runtime.getURL as (p: string) => string)('/dashboard.html');
   let pendingHashId: string | null = null;
   let deepLinkAttempts = 0;
+  let showFirstLoopHint = $state(false);
 
   onMount(() => {
     engine = new LoopEngine(video, {
@@ -64,6 +72,22 @@
       },
     });
     speed = video.playbackRate;
+    // If the user hasn't dismissed the first-loop coach mark yet, arm it —
+    // the effect below only shows it once they have at least one loop.
+    void isHintDismissed('first-loop').then((dismissed) => {
+      if (!dismissed) showFirstLoopHint = true;
+    });
+    // Restore collapsed preference (default: collapsed — panel only opens
+    // on demand via the player button) and mirror to the toggle button.
+    void getUiPrefs().then((prefs) => {
+      collapsed = prefs.collapsed !== false; // undefined/true → true
+      playerBtn?.setCollapsed(collapsed);
+    });
+    playerBtn = attachPlayerButton(() => {
+      collapsed = !collapsed;
+      playerBtn?.setCollapsed(collapsed);
+      void setUiPref('collapsed', collapsed);
+    });
 
     document.addEventListener('keydown', onKey, true);
 
@@ -100,7 +124,14 @@
     engine?.destroy();
     markers?.destroy();
     markers = null;
+    playerBtn?.destroy();
+    playerBtn = null;
     document.removeEventListener('keydown', onKey, true);
+  });
+
+  // Keep the player button's loop count in sync with what's actually visible.
+  $effect(() => {
+    playerBtn?.setLoopCount(loops.length);
   });
 
   // Keep the progress-bar overlay in sync with the active loop and any edits
@@ -344,6 +375,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="yl"
+  class:collapsed
   role="group"
   aria-label="YouLoop panel"
   onkeydown={panelKeyGuard}
@@ -352,6 +384,12 @@
 >
   <header>
     <span class="brand">YouLoop</span>
+    <button class="capture-btn" onclick={quickSet}>
+      {pendingStart == null ? 'Start new loop (A)' : `Complete loop (B) — start ${fmt(pendingStart)}`}
+    </button>
+    {#if activeId}
+      <button class="ghost" onclick={exitLoop}>Exit loop (\)</button>
+    {/if}
     <div class="spacer"></div>
     <div class="speed">
       <button onclick={() => setHeaderSpeed(speed - 0.05)} aria-label="Slower">−</button>
@@ -361,12 +399,24 @@
     <a class="dash-link" href={dashboardUrl} target="_blank" rel="noopener">Dashboard →</a>
   </header>
 
-  <div class="capture">
-    <button onclick={quickSet}>
-      {pendingStart == null ? 'Set loop start (A)' : `Press B to set loop end (start ${fmt(pendingStart)})`}
-    </button>
-    {#if activeId}<button class="ghost" onclick={exitLoop}>Exit loop (\)</button>{/if}
-  </div>
+  {#if showFirstLoopHint && flat.length > 0}
+    <div class="hint" role="note">
+      <span class="hint-icon" aria-hidden="true">💡</span>
+      <span class="hint-body">
+        Hover a loop for editing controls. Drag the <b>A</b> / <b>B</b> flags
+        on the progress bar to fine-tune. Press <b>0</b> to jump back to the
+        loop's start.
+      </span>
+      <button
+        class="hint-close"
+        onclick={() => {
+          showFirstLoopHint = false;
+          void dismissHint('first-loop');
+        }}
+        aria-label="Dismiss tip"
+      >✕</button>
+    </div>
+  {/if}
 
   <div class="loops">
     {#each flat as { node, depth } (node.id)}
@@ -445,7 +495,13 @@
       </div>
     {/each}
     {#if !flat.length}
-      <div class="empty">No loops yet. Press <b>A</b> at the start, then <b>B</b> at the end.</div>
+      <div class="empty">
+        <div class="empty-lead">Practice a section on repeat.</div>
+        <div class="empty-sub">
+          Press <b>A</b> at the start, <b>B</b> at the end. Then slow it down,
+          repeat it, or drag the flags on the progress bar to fine-tune.
+        </div>
+      </div>
     {/if}
   </div>
 </div>
@@ -453,6 +509,7 @@
 <style>
   /* Themed to match current YouTube dark UI. Isolated by the host Shadow DOM. */
   :global(:host) { display: block; width: 100%; }
+  .yl.collapsed { display: none; }
   .yl {
     box-sizing: border-box;
     font-family: 'Roboto', 'Arial', sans-serif;
@@ -470,7 +527,6 @@
   .spacer { flex: 1; }
   .speed { display: flex; align-items: center; gap: 6px; }
   .speed span { min-width: 42px; text-align: center; }
-  .capture { display: flex; gap: 8px; margin-bottom: 8px; }
   .loops { max-height: 320px; overflow-y: auto; }
   .row {
     padding: 4px 12px; border-radius: 8px;
@@ -558,7 +614,26 @@
     background: transparent; color: #999; font-size: 12px;
   }
   .ctl button:hover { background: rgba(255, 255, 255, 0.08); color: #f1f1f1; }
-  .empty { color: #aaa; padding: 12px 4px; }
+  .hint {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 8px 10px; margin-bottom: 8px;
+    background: rgba(62, 166, 255, 0.08);
+    border: 1px solid rgba(62, 166, 255, 0.25);
+    border-radius: 8px;
+    color: #d4d4d4; font-size: 12px; line-height: 1.5;
+  }
+  .hint-icon { font-size: 14px; line-height: 1.3; flex-shrink: 0; }
+  .hint-body { flex: 1; }
+  .hint-body b { color: #f1f1f1; font-weight: 600; }
+  .hint-close {
+    background: transparent; color: #888; padding: 2px 6px;
+    font-size: 12px; line-height: 1; flex-shrink: 0;
+  }
+  .hint-close:hover { background: rgba(255, 255, 255, 0.08); color: #f1f1f1; }
+  .empty { padding: 14px 4px 8px; }
+  .empty-lead { color: #f1f1f1; font-size: 13px; margin-bottom: 4px; }
+  .empty-sub { color: #aaa; font-size: 12px; line-height: 1.5; }
+  .empty-sub b { color: #f1f1f1; font-weight: 600; }
   .dash-link {
     color: #3ea6ff; text-decoration: none; font-size: 12px;
     padding: 3px 10px; border-radius: 999px;
