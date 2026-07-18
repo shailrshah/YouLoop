@@ -101,6 +101,12 @@
     markers.setActive(current);
   });
 
+  // Mirror the pending A-mark to the progress bar so the user sees where
+  // they've dropped it before pressing B.
+  $effect(() => {
+    markers?.setPending(pendingStart);
+  });
+
   // Sync the input's value from storage only when the user isn't editing, so
   // external writes (play-count increments, cross-tab edits) never clobber
   // a caret mid-type or drop keystrokes.
@@ -346,7 +352,7 @@
 
   <div class="capture">
     <button onclick={quickSet}>
-      {pendingStart == null ? 'Set loop start (A)' : `End loop at cursor (start ${fmt(pendingStart)})`}
+      {pendingStart == null ? 'Set loop start (A)' : `Press B to set loop end (start ${fmt(pendingStart)})`}
     </button>
     {#if activeId}<button class="ghost" onclick={exitLoop}>Exit loop (\)</button>{/if}
   </div>

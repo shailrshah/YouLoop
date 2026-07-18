@@ -3,13 +3,14 @@ import type { Loop } from '@/lib/loops/model';
 const CONTAINER_ID = 'youloop-markers';
 
 /**
- * Overlays a translucent band on YouTube's progress bar spanning the active
- * loop's start/end. The band is a child of `.ytp-progress-bar-container` so it
- * inherits the container's width and layers above the scrubber's fill.
+ * Overlays A/B pins on YouTube's progress bar to mark the active loop's
+ * boundaries (and the pending A-mark during A/B capture).
  *
- * Positions are percentages of `video.duration`. YouTube's chrome sometimes
- * re-renders the progress-bar subtree (fullscreen toggle, quality switch),
- * so a MutationObserver on the player re-parents the overlay if needed.
+ * Pins are children of `.ytp-progress-bar-container` and use
+ * `pointer-events: none` so YouTube's scrubber stays fully clickable.
+ * Positions are percentages of `video.duration`. YouTube sometimes
+ * re-renders the progress-bar subtree (fullscreen, quality switch), so a
+ * MutationObserver re-parents the overlay if needed.
  */
 export function attachLoopMarkers(video: HTMLVideoElement) {
   const overlay = document.createElement('div');
@@ -20,26 +21,55 @@ export function attachLoopMarkers(video: HTMLVideoElement) {
     'bottom: 0',
     'left: 0',
     'right: 0',
-    'pointer-events: none', // never eat clicks — YouTube's scrubber must stay clickable
-    'display: none',
-    'z-index: 40',
+    'pointer-events: none',
+    // Sit above YouTube's played/buffered/hover-preview bars (all in the
+    // 0–30 range) but below the scrubber knob so it stays interactive.
+    'z-index: 100',
   ].join(';');
 
-  const band = document.createElement('div');
-  band.style.cssText = [
-    'position: absolute',
-    'top: 0',
-    'bottom: 0',
-    // Yellow reads clearly on top of both YouTube's red played fill and the
-    // grey unplayed track; blue got muddy over red.
-    'background: rgba(255, 225, 74, 0.35)',
-    'border-left: 2px solid #ffe14a',
-    'border-right: 2px solid #ffe14a',
-    'box-sizing: border-box',
-  ].join(';');
-  overlay.appendChild(band);
+  // Build a labeled pin: vertical stem drops below the progress bar with a
+  // small square flag holding a single-letter glyph. Sits below the bar so
+  // it doesn't fight the scrubber knob.
+  const makePin = (label: 'A' | 'B', color: string, textColor: string) => {
+    const pin = document.createElement('div');
+    pin.style.cssText = [
+      'position: absolute',
+      'top: -2px',
+      'bottom: -14px',
+      'width: 2px',
+      `background: ${color}`,
+      'transform: translateX(-1px)', // center the stem on the mark
+      'display: none',
+      'pointer-events: none',
+    ].join(';');
+    const flag = document.createElement('div');
+    flag.textContent = label;
+    flag.style.cssText = [
+      'position: absolute',
+      'left: 1px',
+      'bottom: -12px',
+      'transform: translateX(-50%)',
+      `background: ${color}`,
+      `color: ${textColor}`,
+      'font: 700 9px/1 "Roboto","Arial",sans-serif',
+      'padding: 1px 4px 2px',
+      'border-radius: 3px',
+      'letter-spacing: 0.3px',
+      'box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5)',
+    ].join(';');
+    pin.appendChild(flag);
+    return pin;
+  };
+
+  // Green A pin — shown for the pending A/B state and for the active loop's start.
+  const pinA = makePin('A', '#22c55e', '#062d10');
+  // Green B pin — shown for the active loop's end.
+  const pinB = makePin('B', '#22c55e', '#062d10');
+  overlay.appendChild(pinA);
+  overlay.appendChild(pinB);
 
   let active: Loop | null = null;
+  let pendingTime: number | null = null;
   let mounted = false;
 
   const findContainer = (): HTMLElement | null =>
@@ -49,28 +79,36 @@ export function attachLoopMarkers(video: HTMLVideoElement) {
     if (mounted && overlay.isConnected) return;
     const host = findContainer();
     if (!host) return;
-    // Ensure the host is a positioning context. It is by default in YouTube's
-    // styles, but re-assert defensively without overriding an existing value.
     if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
     host.appendChild(overlay);
     mounted = true;
     render();
   };
 
-  const render = () => {
-    if (!active || !Number.isFinite(video.duration) || video.duration <= 0) {
-      overlay.style.display = 'none';
-      return;
-    }
-    const dur = video.duration;
-    const startPct = Math.max(0, Math.min(100, (active.startTime / dur) * 100));
-    const endPct = Math.max(0, Math.min(100, (active.endTime / dur) * 100));
-    band.style.left = `${startPct}%`;
-    band.style.width = `${Math.max(0, endPct - startPct)}%`;
-    overlay.style.display = 'block';
+  const pctOf = (t: number, dur: number) =>
+    Math.max(0, Math.min(100, (t / dur) * 100));
+
+  const showPin = (pin: HTMLElement, time: number, dur: number) => {
+    pin.style.left = `${pctOf(time, dur)}%`;
+    pin.style.display = 'block';
   };
 
-  // Re-parent when YouTube swaps out the progress bar (fullscreen, layout).
+  const render = () => {
+    const dur = video.duration;
+    pinA.style.display = 'none';
+    pinB.style.display = 'none';
+    if (!Number.isFinite(dur) || dur <= 0) return;
+
+    // A/B pins: active loop's start (A) and end (B), plus the pending A-mark
+    // during A/B capture. Pending takes precedence — the user is mid-capture.
+    if (pendingTime != null) {
+      showPin(pinA, pendingTime, dur);
+    } else if (active) {
+      showPin(pinA, active.startTime, dur);
+      showPin(pinB, active.endTime, dur);
+    }
+  };
+
   const bodyObserver = new MutationObserver(() => {
     if (!overlay.isConnected) {
       mounted = false;
@@ -88,7 +126,12 @@ export function attachLoopMarkers(video: HTMLVideoElement) {
   return {
     setActive(loop: Loop | null) {
       active = loop;
-      mount(); // in case the container didn't exist earlier
+      mount();
+      render();
+    },
+    setPending(time: number | null) {
+      pendingTime = time;
+      mount();
       render();
     },
     destroy() {
