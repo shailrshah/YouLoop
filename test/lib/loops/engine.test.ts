@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LoopEngine } from './engine';
-import type { Loop } from './model';
+import { LoopEngine } from '@/lib/loops/engine';
+import type { Loop } from '@/lib/loops/model';
 
 // -------- Fake HTMLVideoElement --------
 //

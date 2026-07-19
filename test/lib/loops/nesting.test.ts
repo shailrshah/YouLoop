@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildLoopTree } from './nesting';
-import type { Loop } from './model';
+import { buildLoopTree } from '@/lib/loops/nesting';
+import type { Loop } from '@/lib/loops/model';
 
 // Minimal helper: only the fields buildLoopTree reads. The rest of Loop is
 // spread through by object spread, so any string/0/whatever is fine.
