@@ -41,7 +41,7 @@
   let activeId = $state<string | null>(null);
   let rep = $state(0);
   let repTotal = $state<number | null>(null);
-  let speed = $state(1); // header speed (ambient playback rate)
+  let speed = $state(1); // ambient playback rate; drives the "hide chip if same" check
   let pendingStart = $state<number | null>(null); // A/B quick-set
   const dashboardUrl = (browser.runtime.getURL as (p: string) => string)('/dashboard.html');
   let pendingHashId: string | null = null;
@@ -342,7 +342,10 @@
     // Only handle a key when the action is meaningful right now — otherwise
     // let YouTube (or the browser) see it. Keys that overlap YouTube's own
     // bindings (`0`, `,`, `.`) fall through when no loop is active.
-    switch (e.key) {
+    // Normalize letter keys to lowercase so Caps Lock / Shift don't break
+    // A/B/[/]/\ bindings.
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    switch (key) {
       case '0':
         if (!active) return;
         engine.clipToStart();

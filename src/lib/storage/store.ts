@@ -7,13 +7,27 @@ const KEY = 'youloop';
 const HINTS_KEY = 'youloop:hints';
 const UI_KEY = 'youloop:ui';
 
+// True once the extension has been reloaded / uninstalled and any further
+// browser.* call will throw "Extension context invalidated". There's nothing
+// useful to do in that state — the tab needs a manual refresh — so we
+// swallow the error to keep the console quiet during dev reloads.
+function isContextInvalidated(err: unknown): boolean {
+  return err instanceof Error && /context invalidated/i.test(err.message);
+}
+function guard<T>(p: Promise<T>, fallback: T): Promise<T> {
+  return p.catch((err) => {
+    if (isContextInvalidated(err)) return fallback;
+    throw err;
+  });
+}
+
 async function read(): Promise<DB> {
-  const res = await browser.storage.local.get(KEY);
+  const res = await guard(browser.storage.local.get(KEY), {} as Record<string, unknown>);
   return { ...EMPTY_DB, ...(res[KEY] as DB | undefined) };
 }
 
 async function write(db: DB): Promise<void> {
-  await browser.storage.local.set({ [KEY]: db });
+  await guard(browser.storage.local.set({ [KEY]: db }), undefined);
 }
 
 // Serialize all mutations so two overlapping read-modify-writes can't clobber
@@ -32,7 +46,7 @@ function mutate<T>(fn: (db: DB) => T | Promise<T>): Promise<T> {
 }
 
 /** Live, cross-surface readable of the whole DB (panel + dashboard stay synced). */
-export function createDbStore(): Readable<DB> & { reload: () => void } {
+export function createDbStore(): Readable<DB> {
   const { subscribe, set } = writable<DB>(EMPTY_DB, () => {
     let cancelled = false;
     read().then((db) => !cancelled && set(db));
@@ -41,13 +55,21 @@ export function createDbStore(): Readable<DB> & { reload: () => void } {
         set({ ...EMPTY_DB, ...(changes[KEY].newValue as DB) });
       }
     };
-    browser.storage.onChanged.addListener(listener);
+    try {
+      browser.storage.onChanged.addListener(listener);
+    } catch (err) {
+      if (!isContextInvalidated(err)) throw err;
+    }
     return () => {
       cancelled = true;
-      browser.storage.onChanged.removeListener(listener);
+      try {
+        browser.storage.onChanged.removeListener(listener);
+      } catch (err) {
+        if (!isContextInvalidated(err)) throw err;
+      }
     };
   });
-  return { subscribe, reload: () => void read().then(set) };
+  return { subscribe };
 }
 
 // ---- CRUD (mutate storage; the onChanged listener re-pushes to all stores) ----
@@ -56,11 +78,6 @@ export function upsertVideo(v: Video): Promise<void> {
   return mutate((db) => {
     db.videos[v.videoId] = { ...db.videos[v.videoId], ...v };
   });
-}
-
-export async function loopsForVideo(videoId: string): Promise<Loop[]> {
-  const db = await read();
-  return Object.values(db.loops).filter((l) => l.videoId === videoId);
 }
 
 export function addLoop(
@@ -129,15 +146,15 @@ export function nextLoopName(existingCount: number): string {
 type DismissedHints = Record<string, true>;
 
 export async function isHintDismissed(hint: string): Promise<boolean> {
-  const res = await browser.storage.local.get(HINTS_KEY);
+  const res = await guard(browser.storage.local.get(HINTS_KEY), {} as Record<string, unknown>);
   const set = (res[HINTS_KEY] as DismissedHints | undefined) ?? {};
   return !!set[hint];
 }
 
 export async function dismissHint(hint: string): Promise<void> {
-  const res = await browser.storage.local.get(HINTS_KEY);
+  const res = await guard(browser.storage.local.get(HINTS_KEY), {} as Record<string, unknown>);
   const set = { ...((res[HINTS_KEY] as DismissedHints | undefined) ?? {}), [hint]: true as const };
-  await browser.storage.local.set({ [HINTS_KEY]: set });
+  await guard(browser.storage.local.set({ [HINTS_KEY]: set }), undefined);
 }
 
 // ---- Global UI preferences (collapsed panel, etc.) ----
@@ -145,13 +162,13 @@ export async function dismissHint(hint: string): Promise<void> {
 interface UiPrefs { collapsed?: boolean }
 
 export async function getUiPrefs(): Promise<UiPrefs> {
-  const res = await browser.storage.local.get(UI_KEY);
+  const res = await guard(browser.storage.local.get(UI_KEY), {} as Record<string, unknown>);
   return (res[UI_KEY] as UiPrefs | undefined) ?? {};
 }
 
 export async function setUiPref<K extends keyof UiPrefs>(key: K, value: UiPrefs[K]): Promise<void> {
   const current = await getUiPrefs();
-  await browser.storage.local.set({ [UI_KEY]: { ...current, [key]: value } });
+  await guard(browser.storage.local.set({ [UI_KEY]: { ...current, [key]: value } }), undefined);
 }
 
 // ---- Import / export ----

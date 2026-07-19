@@ -98,6 +98,25 @@ export function attachPlayerButton(onToggle: () => void): PlayerButtonHandle {
     }
   };
 
+  const safeInsert = (parent: Element, before: Element | null): boolean => {
+    // MutationObserver races: `before` may have been detached between the
+    // query and this call, or `parent` may be about to be replaced. Guard
+    // against both, and swallow the "not a child" DOMException that arises
+    // when the subtree gets re-rendered mid-insert.
+    if (!parent.isConnected) return false;
+    if (before && before.parentNode !== parent) {
+      parent.appendChild(btn);
+      return true;
+    }
+    try {
+      if (before) parent.insertBefore(btn, before);
+      else parent.appendChild(btn);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const mount = () => {
     if (mounted && btn.isConnected) return;
     // Anchor next to the fullscreen button so we live in the same visual
@@ -105,8 +124,7 @@ export function attachPlayerButton(onToggle: () => void): PlayerButtonHandle {
     // so insertBefore must run against the fullscreen button's actual
     // parent, not the outer `.ytp-right-controls`.
     const fs = document.querySelector<HTMLElement>('.ytp-fullscreen-button');
-    if (fs?.parentElement) {
-      fs.parentElement.insertBefore(btn, fs);
+    if (fs?.parentElement && safeInsert(fs.parentElement, fs)) {
       mounted = true;
       setActiveVisual();
       setCountVisual();
@@ -115,8 +133,7 @@ export function attachPlayerButton(onToggle: () => void): PlayerButtonHandle {
     // Fallback: append to the outer right-controls if the fullscreen button
     // isn't there (e.g. YouTube's chrome hasn't fully rendered yet).
     const host = document.querySelector<HTMLElement>('.ytp-right-controls');
-    if (host) {
-      host.appendChild(btn);
+    if (host && safeInsert(host, null)) {
       mounted = true;
       setActiveVisual();
       setCountVisual();
@@ -126,12 +143,21 @@ export function attachPlayerButton(onToggle: () => void): PlayerButtonHandle {
   // Re-mount when YouTube swaps out the controls subtree, and keep trying if
   // the anchor didn't exist yet at construction (the player controls often
   // render after #below, which is where the panel already mounted).
-  const observer = new MutationObserver(() => {
-    if (!mounted || !btn.isConnected) {
-      mounted = false;
-      mount();
-    }
-  });
+  let mountScheduled = false;
+  const scheduleMount = () => {
+    if (mountScheduled) return;
+    mountScheduled = true;
+    // Coalesce mount attempts and run after the current mutation batch has
+    // settled, so we don't race YouTube mid-swap.
+    queueMicrotask(() => {
+      mountScheduled = false;
+      if (!mounted || !btn.isConnected) {
+        mounted = false;
+        mount();
+      }
+    });
+  };
+  const observer = new MutationObserver(scheduleMount);
   observer.observe(document.body, { childList: true, subtree: true });
 
   const retryUntilMounted = (tries = 0) => {
