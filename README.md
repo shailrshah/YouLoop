@@ -35,6 +35,17 @@ codebase.
 | `\` | Exit the active loop |
 | `,` / `.` | Nudge active loop start / end by 1s |
 
+## Install
+
+Grab a prebuilt zip from the [latest release](https://github.com/shailrshah/YouLoop/releases/latest).
+
+- **Chrome / Edge / Brave** — download `youloop-<version>-chrome.zip`,
+  unzip, then in `chrome://extensions` toggle **Developer mode** →
+  **Load unpacked** → select the unzipped folder.
+- **Firefox** — download `youloop-<version>-firefox.zip`, then in
+  `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** →
+  select any file inside the unzipped folder (e.g. `manifest.json`).
+
 ## Develop
 
 Requires Node 18+ and npm.
@@ -58,8 +69,8 @@ Load unpacked:
 
 ## Status
 
-v1 in progress. Independent pitch shifting (change pitch without changing speed)
-is planned for a later phase via the Web Audio API.
+v1.0.0 released. Independent pitch shifting (change pitch without changing
+speed) is planned for a later phase via the Web Audio API.
 
 See [DESIGN.md](./DESIGN.md) for the full design.
 
